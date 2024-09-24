@@ -1,3 +1,24 @@
+// #include <Arduino.h>
+
+// // put function declarations here:
+// int myFunction(int, int);
+
+// void setup() {
+//   // put your setup code here, to run once:
+//   int result = myFunction(2, 3);
+//   Serial.begin(115200);
+// }
+
+// void loop() {
+//   // put your main code here, to run repeatedly:
+//   Serial.println("Hello World!");
+// }
+
+// // put function definitions here:
+// int myFunction(int x, int y) {
+//   return x + y;
+// }
+
 /**
    The MIT License (MIT)
 
@@ -51,7 +72,7 @@
 
 
 // Initialize the OLED display using Arduino Wire:
-SSD1306Wire display(0x3c, 5, 4);  // ADDRESS, SDA, SCL  -  SDA and SCL usually populate automatically based on your board's pins_arduino.h e.g. https://github.com/esp8266/Arduino/blob/master/variants/nodemcu/pins_arduino.h
+SSD1306Wire display(0x3c, 5, 4);   // ADDRESS, SDA, SCL  -  SDA and SCL usually populate automatically based on your board's pins_arduino.h e.g. https://github.com/esp8266/Arduino/blob/master/variants/nodemcu/pins_arduino.h
 // SSD1306Wire display(0x3c, D3, D5);  // ADDRESS, SDA, SCL  -  If not, they can be specified manually.
 // SSD1306Wire display(0x3c, SDA, SCL, GEOMETRY_128_32);  // ADDRESS, SDA, SCL, OLEDDISPLAY_GEOMETRY  -  Extra param required for 128x32 displays.
 // SH1106Wire display(0x3c, SDA, SCL);     // ADDRESS, SDA, SCL
@@ -158,7 +179,8 @@ void drawCircleDemo() {
 }
 
 void drawProgressBarDemo() {
-  int progress = (counter / 5) % 100;
+//   int progress = (counter / 5) % 100;
+  int progress = map(counter, 0, 4095, 0, 100);
   // draw the progress bar
   display.drawProgressBar(0, 32, 120, 10, progress);
 
@@ -190,9 +212,10 @@ void loop() {
   display.display();
 
   if (millis() - timeSinceLastModeSwitch > DEMO_DURATION) {
-    demoMode = (demoMode + 1)  % demoLength;
+    // demoMode = (demoMode + 1)  % demoLength;
+    demoMode = 5;
     timeSinceLastModeSwitch = millis();
   }
-  counter++;
+  counter = analogRead(35);
   delay(10);
 }
