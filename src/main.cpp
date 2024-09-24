@@ -1,221 +1,138 @@
-// #include <Arduino.h>
+#include <Wire.h>
+#include "SSD1306Wire.h"
+#include "secrets.h"
+#include <WiFiClientSecure.h>
+#include <MQTTClient.h>
+#include <ArduinoJson.h>
+#include "WiFi.h"
+#include "EmonLib.h"
 
-// // put function declarations here:
-// int myFunction(int, int);
-
-// void setup() {
-//   // put your setup code here, to run once:
-//   int result = myFunction(2, 3);
-//   Serial.begin(115200);
-// }
-
-// void loop() {
-//   // put your main code here, to run repeatedly:
-//   Serial.println("Hello World!");
-// }
-
-// // put function definitions here:
-// int myFunction(int x, int y) {
-//   return x + y;
-// }
-
-/**
-   The MIT License (MIT)
-
-   Copyright (c) 2018 by ThingPulse, Daniel Eichhorn
-   Copyright (c) 2018 by Fabrice Weinberg
-
-   Permission is hereby granted, free of charge, to any person obtaining a copy
-   of this software and associated documentation files (the "Software"), to deal
-   in the Software without restriction, including without limitation the rights
-   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-   copies of the Software, and to permit persons to whom the Software is
-   furnished to do so, subject to the following conditions:
-
-   The above copyright notice and this permission notice shall be included in all
-   copies or substantial portions of the Software.
-
-   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-   SOFTWARE.
-
-   ThingPulse invests considerable time and money to develop these open source libraries.
-   Please support us by buying our products (and not the clones) from
-   https://thingpulse.com
-
-*/
-
-// Include the correct display library
-
-// For a connection via I2C using the Arduino Wire include:
-#include <Wire.h>               // Only needed for Arduino 1.6.5 and earlier
-#include "SSD1306Wire.h"        // legacy: #include "SSD1306.h"
-// OR #include "SH1106Wire.h"   // legacy: #include "SH1106.h"
-
-// For a connection via I2C using brzo_i2c (must be installed) include:
-// #include <brzo_i2c.h>        // Only needed for Arduino 1.6.5 and earlier
-// #include "SSD1306Brzo.h"
-// OR #include "SH1106Brzo.h"
-
-// For a connection via SPI include:
-// #include <SPI.h>             // Only needed for Arduino 1.6.5 and earlier
-// #include "SSD1306Spi.h"
-// OR #include "SH1106SPi.h"
-
-
-// Optionally include custom images
 #include "images.h"
 
+#define SENSOR_PIN 35
+#define SENSOR_OFFSET 0.06
+#define VOLTAGE 220.0
 
-// Initialize the OLED display using Arduino Wire:
-SSD1306Wire display(0x3c, 5, 4);   // ADDRESS, SDA, SCL  -  SDA and SCL usually populate automatically based on your board's pins_arduino.h e.g. https://github.com/esp8266/Arduino/blob/master/variants/nodemcu/pins_arduino.h
-// SSD1306Wire display(0x3c, D3, D5);  // ADDRESS, SDA, SCL  -  If not, they can be specified manually.
-// SSD1306Wire display(0x3c, SDA, SCL, GEOMETRY_128_32);  // ADDRESS, SDA, SCL, OLEDDISPLAY_GEOMETRY  -  Extra param required for 128x32 displays.
-// SH1106Wire display(0x3c, SDA, SCL);     // ADDRESS, SDA, SCL
+SSD1306Wire display(0x3c, 5, 4);
 
-// Initialize the OLED display using brzo_i2c:
-// SSD1306Brzo display(0x3c, D3, D5);  // ADDRESS, SDA, SCL
-// or
-// SH1106Brzo display(0x3c, D3, D5);   // ADDRESS, SDA, SCL
+#define AWS_IOT_PUBLISH_TOPIC "esp32/pub"
+#define AWS_IOT_SUBSCRIBE_TOPIC "esp32/sub"
 
-// Initialize the OLED display using SPI:
-// D5 -> CLK
-// D7 -> MOSI (DOUT)
-// D0 -> RES
-// D2 -> DC
-// D8 -> CS
-// SSD1306Spi display(D0, D2, D8);  // RES, DC, CS
-// or
-// SH1106Spi display(D0, D2);       // RES, DC
+EnergyMonitor emon;
 
+void messageHandler(String &topic, String &payload);
 
-#define DEMO_DURATION 3000
-typedef void (*Demo)(void);
+WiFiClientSecure net = WiFiClientSecure();
+MQTTClient client = MQTTClient(256);
 
-int demoMode = 0;
 int counter = 1;
 
-void setup() {
-  Serial.begin(115200);
-  Serial.println();
-  Serial.println();
+void connectAWS()
+{
+	WiFi.mode(WIFI_STA);
+	WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
+	Serial.println("Connecting to Wi-Fi");
 
-  // Initialising the UI will init the display too.
-  display.init();
+	while (WiFi.status() != WL_CONNECTED)
+	{
+		delay(500);
+		Serial.print(".");
+	}
 
-  display.flipScreenVertically();
-  display.setFont(ArialMT_Plain_10);
+	// Configure WiFiClientSecure to use the AWS IoT device credentials
+	net.setCACert(AWS_CERT_CA);
+	net.setCertificate(AWS_CERT_CRT);
+	net.setPrivateKey(AWS_CERT_PRIVATE);
 
+	// Connect to the MQTT broker on the AWS endpoint we defined earlier
+	client.begin(AWS_IOT_ENDPOINT, 8883, net);
+
+	// Create a message handler
+	client.onMessage(messageHandler);
+
+	Serial.println("Connecting to AWS IOT");
+
+	while (!client.connect(THINGNAME))
+	{
+		Serial.print(".");
+		delay(100);
+	}
+
+	if (!client.connected())
+	{
+		Serial.println("AWS IoT Timeout!");
+		return;
+	}
+
+	// Subscribe to a topic
+	client.subscribe(AWS_IOT_SUBSCRIBE_TOPIC);
+
+	Serial.println("AWS IoT Connected!");
 }
 
-void drawFontFaceDemo() {
-  // Font Demo1
-  // create more fonts at http://oleddisplay.squix.ch/
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-  display.setFont(ArialMT_Plain_10);
-  display.drawString(0, 0, "Hello world");
-  display.setFont(ArialMT_Plain_16);
-  display.drawString(0, 10, "Hello world");
-  display.setFont(ArialMT_Plain_24);
-  display.drawString(0, 26, "Hello world");
+void publishMessage(double current, double power)
+{
+	StaticJsonDocument<200> doc;
+	doc["corrente"] = current;
+	doc["potencia"] = power;
+	char jsonBuffer[512];
+	serializeJson(doc, jsonBuffer); // print to client
+
+	client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
 }
 
-void drawTextFlowDemo() {
-  display.setFont(ArialMT_Plain_10);
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-  display.drawStringMaxWidth(0, 0, 128,
-                             "Lorem ipsum\n dolor sit amet, consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore." );
+void messageHandler(String &topic, String &payload)
+{
+	Serial.println("incoming: " + topic + " - " + payload);
 }
 
-void drawTextAlignmentDemo() {
-  // Text alignment demo
-  display.setFont(ArialMT_Plain_10);
+void setup()
+{
+	Serial.begin(115200);
+	connectAWS();
+	Serial.println();
 
-  // The coordinates define the left starting point of the text
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-  display.drawString(0, 10, "Left aligned (0,10)");
+	display.init();
 
-  // The coordinates define the center of the text
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawString(64, 22, "Center aligned (64,22)");
-
-  // The coordinates define the right end of the text
-  display.setTextAlignment(TEXT_ALIGN_RIGHT);
-  display.drawString(128, 33, "Right aligned (128,33)");
+	display.flipScreenVertically();
+	display.setFont(ArialMT_Plain_10);
+	emon.current(SENSOR_PIN, 1);
 }
 
-void drawRectDemo() {
-  // Draw a pixel at given position
-  for (int i = 0; i < 10; i++) {
-    display.setPixel(i, i);
-    display.setPixel(10 - i, i);
-  }
-  display.drawRect(12, 12, 20, 20);
+void drawProgressBarDemo()
+{
+	int progress = map(counter, 0, 4095, 0, 100);
+	display.drawProgressBar(0, 32, 120, 10, progress);
 
-  // Fill the rectangle
-  display.fillRect(14, 14, 17, 17);
-
-  // Draw a line horizontally
-  display.drawHorizontalLine(0, 40, 20);
-
-  // Draw a line horizontally
-  display.drawVerticalLine(40, 0, 20);
+	display.setTextAlignment(TEXT_ALIGN_CENTER);
+	display.drawString(64, 15, String(progress) + "%");
 }
 
-void drawCircleDemo() {
-  for (int i = 1; i < 8; i++) {
-    display.setColor(WHITE);
-    display.drawCircle(32, 32, i * 3);
-    if (i % 2 == 0) {
-      display.setColor(BLACK);
-    }
-    display.fillCircle(96, 32, 32 - i * 3);
-  }
-}
+void loop()
+{
+	display.clear();
 
-void drawProgressBarDemo() {
-//   int progress = (counter / 5) % 100;
-  int progress = map(counter, 0, 4095, 0, 100);
-  // draw the progress bar
-  display.drawProgressBar(0, 32, 120, 10, progress);
+	display.setFont(ArialMT_Plain_10);
+	display.setTextAlignment(TEXT_ALIGN_LEFT);
 
-  // draw the percentage as String
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawString(64, 15, String(progress) + "%");
-}
+	double current = emon.calcIrms(1484);
+	current = current - SENSOR_OFFSET > 0
+	? current - SENSOR_OFFSET
+	: 0;
+	double power = current * VOLTAGE;
 
-void drawImageDemo() {
-  // see http://blog.squix.org/2015/05/esp8266-nodemcu-how-to-create-xbm.html
-  // on how to create xbm files
-  display.drawXbm(34, 14, WiFi_Logo_width, WiFi_Logo_height, WiFi_Logo_bits);
-}
+	Serial.print("Corrente: ");
+	Serial.println(current);
+	Serial.print("Potência: ");
+	Serial.println(power);
+	Serial.println();
 
-Demo demos[] = {drawFontFaceDemo, drawTextFlowDemo, drawTextAlignmentDemo, drawRectDemo, drawCircleDemo, drawProgressBarDemo, drawImageDemo};
-int demoLength = (sizeof(demos) / sizeof(Demo));
-long timeSinceLastModeSwitch = 0;
-
-void loop() {
-  // clear the display
-  display.clear();
-  // draw the current demo method
-  demos[demoMode]();
-
-  display.setFont(ArialMT_Plain_10);
-  display.setTextAlignment(TEXT_ALIGN_RIGHT);
-  display.drawString(128, 54, String(millis()));
-  // write the buffer to the display
-  display.display();
-
-  if (millis() - timeSinceLastModeSwitch > DEMO_DURATION) {
-    // demoMode = (demoMode + 1)  % demoLength;
-    demoMode = 5;
-    timeSinceLastModeSwitch = millis();
-  }
-  counter = analogRead(35);
-  delay(10);
+	// display.drawString(0, 0, String(current));
+	// display.drawString(0, 10, String(power));
+	// display.drawString(128, 54, String(millis()));
+	// display.display();
+	publishMessage(current, power);
+	client.loop();
+	delay(500);
 }
