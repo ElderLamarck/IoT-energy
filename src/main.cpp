@@ -9,14 +9,15 @@
 
 #include "images.h"
 
-#define SENSOR_PIN 35
+#define SENSOR_PIN 34
+#define RELAY_PIN 4
 #define SENSOR_OFFSET 0.06
 #define VOLTAGE 220.0
 
 SSD1306Wire display(0x3c, 5, 4);
 
-#define AWS_IOT_PUBLISH_TOPIC "esp32/pub"
-#define AWS_IOT_SUBSCRIBE_TOPIC "esp32/sub"
+#define AWS_IOT_PUBLISH_TOPIC "energy/consumption"
+#define AWS_IOT_SUBSCRIBE_TOPIC "energy/power"
 
 EnergyMonitor emon;
 
@@ -26,6 +27,7 @@ WiFiClientSecure net = WiFiClientSecure();
 MQTTClient client = MQTTClient(256);
 
 int counter = 1;
+int power = 1;
 
 void connectAWS()
 {
@@ -84,7 +86,13 @@ void publishMessage(double current, double power)
 
 void messageHandler(String &topic, String &payload)
 {
-	Serial.println("incoming: " + topic + " - " + payload);
+	Serial.print("Power: ");
+	Serial.println(payload.toInt() == 1 ? "ON" : "OFF");
+	Serial.println(payload);
+
+	payload.toInt() == 1
+	? digitalWrite(RELAY_PIN, HIGH)
+	: digitalWrite(RELAY_PIN, LOW);
 }
 
 void setup()
@@ -98,6 +106,7 @@ void setup()
 	display.flipScreenVertically();
 	display.setFont(ArialMT_Plain_10);
 	emon.current(SENSOR_PIN, 1);
+	pinMode(RELAY_PIN, OUTPUT);
 }
 
 void drawProgressBarDemo()
@@ -128,11 +137,7 @@ void loop()
 	Serial.println(power);
 	Serial.println();
 
-	// display.drawString(0, 0, String(current));
-	// display.drawString(0, 10, String(power));
-	// display.drawString(128, 54, String(millis()));
-	// display.display();
 	publishMessage(current, power);
 	client.loop();
-	delay(500);
+	delay(1000);
 }
