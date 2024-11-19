@@ -42,6 +42,10 @@ void connectAWS()
 		Serial.print(".");
 	}
 
+	Serial.println("\nWi-Fi connected!");
+	Serial.print("IP Address: ");
+	Serial.println(WiFi.localIP());
+
 	// Configure WiFiClientSecure to use the AWS IoT device credentials
 	net.setCACert(AWS_CERT_CA);
 	net.setCertificate(AWS_CERT_CRT);
@@ -53,36 +57,61 @@ void connectAWS()
 	// Create a message handler
 	client.onMessage(messageHandler);
 
-	Serial.println("Connecting to AWS IOT");
-
+	Serial.println("Connecting to AWS IoT...");
 	while (!client.connect(THINGNAME))
 	{
 		Serial.print(".");
-		delay(100);
+		Serial.print("MQTT Error: ");
+		Serial.println(client.lastError());
+		delay(1000);
 	}
 
 	if (!client.connected())
 	{
-		Serial.println("AWS IoT Timeout!");
+		Serial.println("\nAWS IoT Timeout!");
 		return;
 	}
 
 	// Subscribe to a topic
-	client.subscribe(AWS_IOT_SUBSCRIBE_TOPIC);
+	if (client.subscribe(AWS_IOT_SUBSCRIBE_TOPIC))
+	{
+		Serial.println("\nSubscribed to topic: " AWS_IOT_SUBSCRIBE_TOPIC);
+	}
+	else
+	{
+		Serial.println("\nFailed to subscribe to topic: " AWS_IOT_SUBSCRIBE_TOPIC);
+	}
 
 	Serial.println("AWS IoT Connected!");
 }
 
 void publishMessage(double current, double power)
 {
-	StaticJsonDocument<200> doc;
-	doc["corrente"] = current;
-	doc["potencia"] = power;
-	char jsonBuffer[512];
-	serializeJson(doc, jsonBuffer); // print to client
+    StaticJsonDocument<200> doc;
+    doc["corrente"] = current;
+    doc["potencia"] = power;
+    char jsonBuffer[512];
+    serializeJson(doc, jsonBuffer);
 
-	client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
+    if (!client.connected())
+    {
+        Serial.println("MQTT client not connected! Attempting to reconnect...");
+        connectAWS();
+    }
+
+    if (!client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer))
+    {
+        Serial.println("Failed to publish message!");
+        Serial.print("MQTT Error: ");
+        Serial.println(client.lastError());
+    }
+    else
+    {
+        Serial.println("Message published successfully!");
+        Serial.println(jsonBuffer);
+    }
 }
+
 
 void messageHandler(String &topic, String &payload)
 {
@@ -99,14 +128,23 @@ void setup()
 {
 	Serial.begin(115200);
 	connectAWS();
-	Serial.println();
 
 	display.init();
-
 	display.flipScreenVertically();
 	display.setFont(ArialMT_Plain_10);
+
 	emon.current(SENSOR_PIN, 1);
 	pinMode(RELAY_PIN, OUTPUT);
+
+	// Synchronize time for TLS
+	Serial.println("Synchronizing time...");
+	configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+	while (time(nullptr) < 100000)
+	{
+		delay(100);
+		Serial.print(".");
+	}
+	Serial.println("\nTime synchronized!");
 }
 
 void drawProgressBarDemo()
@@ -121,7 +159,6 @@ void drawProgressBarDemo()
 void loop()
 {
 	display.clear();
-
 	display.setFont(ArialMT_Plain_10);
 	display.setTextAlignment(TEXT_ALIGN_LEFT);
 
@@ -131,13 +168,10 @@ void loop()
 	: 0;
 	double power = current * VOLTAGE;
 
-	Serial.print("Corrente: ");
-	Serial.println(current);
-	Serial.print("Potência: ");
-	Serial.println(power);
 	Serial.println();
 
 	publishMessage(current, power);
 	client.loop();
+
 	delay(1000);
 }
